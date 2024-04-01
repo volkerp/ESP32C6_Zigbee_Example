@@ -37,8 +37,10 @@ temperature_sensor_handle_t tempsensor;
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ha/esp_zigbee_ha_standard.h"
+#include "driver/gpio.h"  // gpio_read_level
 
 #define LED_PIN RGB_BUILTIN
+#define BTN_PIN GPIO_NUM_9
 
 char modelid[] = {6, 'B', 'M', 'O', 'T', 'O', 'R', '\0'};
 char manufname[] = {6, 'V', 'O', 'L', 'K', 'E', 'R', '\0'};
@@ -74,6 +76,7 @@ uint8_t light_level = 254;
 #define ED_AGING_TIMEOUT                ESP_ZB_ED_AGING_TIMEOUT_64MIN
 #define ED_KEEP_ALIVE                   3000    /* 3000 millisecond */
 #define HA_ESP_LIGHT_ENDPOINT           1     /* esp light bulb device endpoint, used to process light controlling commands */
+#define HA_ESP_SWITCH_ENDPOINT          2
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK  /* Zigbee primary channel mask use in the example */
 
 /********************* Zigbee functions **************************/
@@ -229,7 +232,7 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
 
     //Erase NVRAM before creating connection to new Coordinator
-    esp_zb_nvram_erase_at_start(true); //Comment out this line to erase NVRAM data if you are conneting to new Coordinator
+    //esp_zb_nvram_erase_at_start(true); //Comment out this line to erase NVRAM data if you are conneting to new Coordinator
 
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_main_loop_iteration();
@@ -274,13 +277,67 @@ static esp_err_t zb_read_attribute_handler(esp_zb_zcl_cmd_read_attr_resp_message
 {
     log_i("Received message: endpoint(%d), cluster(0x%x), attribute(0x%x), data size(%d)", message->info.dst_endpoint, message->info.cluster,
              message->variables->attribute.id, message->variables->attribute.data.size);
+
+    return ESP_OK;
 }
 
+
+static QueueHandle_t gpio_evt_queue = NULL;
+
+static void IRAM_ATTR btn_isr()
+{
+    int state = digitalRead(BTN_PIN);
+    xQueueSendFromISR(gpio_evt_queue, &state, NULL);
+}
+
+
+static void btn_task(void *pvParameters) {
+#define POLL_DELAY 10
+
+  int last_state = 1;
+  int press_stamp = 0;
+  int release_stamp = 0;
+  int fast_stamp = 0;
+  int fast_count = 0;
+
+  for (;;) {
+    int btn_state;
+    xQueueReceive(gpio_evt_queue, &btn_state, portMAX_DELAY);
+    //int btn_state = gpio_get_level(BTN_PIN);
+    if (btn_state == 0 && last_state == 1) {
+      // press event
+      press_stamp = millis();
+      if (fast_stamp == 0) {
+        // beginning of fast press
+        fast_stamp = press_stamp;
+      } else if (press_stamp - fast_stamp > 1000) {
+        // too slow for fast press
+        fast_stamp = 0;
+        fast_count = 0;
+      }
+    }
+    else if (btn_state == 1 && last_state == 0) {
+      release_stamp = millis();
+
+      if (release_stamp - press_stamp < 200) {
+        log_i("Veryshort press");
+      } else if (release_stamp - press_stamp < 500) {
+        log_i("Short press");
+      }
+      else {
+        log_i("Long press");
+        esp_zb_factory_reset();
+      }
+    }
+
+    last_state = btn_state;
+  }
+}
 
 
 /********************* Arduino functions **************************/
 void setup() {
-    temperature_sensor_config_t temp_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80.0);
+    temperature_sensor_config_t temp_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
     temperature_sensor_install(&temp_config, &tempsensor);
     temperature_sensor_enable(tempsensor);
 
@@ -291,19 +348,27 @@ void setup() {
     };
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
+    pinMode(BTN_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(BTN_PIN), btn_isr, CHANGE);
+    gpio_evt_queue = xQueueCreate(10, sizeof(int));
+
     // Init RMT and leave light OFF
     neopixelWrite(LED_PIN,0,0,0);
 
     // Start Zigbee task
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
+
+    // Start btn task
+    xTaskCreate(btn_task, "Btn Task", 2048, NULL, 5, NULL);
+  
 }
 
 void loop() {
   float temp = 0;
   temperature_sensor_get_celsius(tempsensor, &temp);
   
-  log_i("Temp %f", temp);
-  int16_t itemp = temp;
+  //log_i("Temp %f", temp);
+  //int16_t itemp = temp;
   //esp_zb_zcl_set_attribute_val(1, ZB_ZCL_CLUSTER_ID_DEVICE_TEMP_CONFIG, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_ATTR_DEVICE_TEMP_CONFIG_CURRENT_TEMP_ID, &itemp, false);)
   delay(5000);
 
