@@ -75,8 +75,10 @@ uint8_t light_level = 254;
 #define INSTALLCODE_POLICY_ENABLE       false    /* enable the install code policy for security */
 #define ED_AGING_TIMEOUT                ESP_ZB_ED_AGING_TIMEOUT_64MIN
 #define ED_KEEP_ALIVE                   3000    /* 3000 millisecond */
-#define HA_ESP_LIGHT_ENDPOINT           1     /* esp light bulb device endpoint, used to process light controlling commands */
-#define HA_ESP_SWITCH_ENDPOINT          2
+#define LIGHT_ENDPOINT                  1     /* esp light bulb device endpoint, used to process light controlling commands */
+#define SWITCH_ENDPOINT                 2
+#define APP_PROFILE_ID                  0x0104 /* 0x0104 == Home Automation (HA) */
+#define POWER_SOURCE                    3 /* 0x03 == battery */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK  /* Zigbee primary channel mask use in the example */
 
 /********************* Zigbee functions **************************/
@@ -149,12 +151,21 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZED_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
 
+    // list of endpoints of this device/node
+    esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
+
+
+    //esp_zb_ep_list_t *esp_zb_on_off_light_ep = esp_zb_on_off_light_ep_create(HA_ESP_LIGHT_ENDPOINT, &light_cfg);
+    // esp_zb_cluster_list_t *cluster_list = esp_zb_on_off_light_ep->endpoint.cluster_desc_list;
+
+    /////////////////////////////////////////////////////
+    //   Create endpoint for LED light
+    /////////////////////////////////////////////////////
+
     // default config for on/off sets mandatory fields for Basic, Identify, Groups, Scenes, On/Off
     //esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
     esp_zb_color_dimmable_light_cfg_t light_cfg = ESP_ZB_DEFAULT_COLOR_DIMMABLE_LIGHT_CONFIG();
 
-    //esp_zb_ep_list_t *esp_zb_on_off_light_ep = esp_zb_on_off_light_ep_create(HA_ESP_LIGHT_ENDPOINT, &light_cfg);
-    // esp_zb_cluster_list_t *cluster_list = esp_zb_on_off_light_ep->endpoint.cluster_desc_list;
 
     esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
 
@@ -214,25 +225,44 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_attribute_list_t *time_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_TIME);
     esp_zb_cluster_list_add_time_cluster(cluster_list, time_cluster, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
     
-    // configure endpoint
-    //
-    esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
-    // esp_zb_endpoint_t ep_cfg = {
-    //   .endpoint = 1,
-    //   .app_profile_id = 0x0104,
-    //   .app_device_id = 0x0001,
-    //   .app_device_version = 0x0001
-    // };
-    esp_zb_ep_list_add_ep(ep_list, cluster_list, 1, 0x0104, ESP_ZB_HA_LEVEL_CONTROLLABLE_OUTPUT_DEVICE_ID);
-    //esp_zb_cluster_list_t *cluster_list = esp_zb_on_off_light_clusters_create(light_cfg)
+    // add clusters of light endpoint to endpoint
+    esp_zb_ep_list_add_ep(ep_list, cluster_list, LIGHT_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_LEVEL_CONTROLLABLE_OUTPUT_DEVICE_ID);
 
-    
+
+
+    /////////////////////////////////////////////////////
+    //   Create endpoint for button
+    /////////////////////////////////////////////////////
+
+    esp_zb_cluster_list_t *btn_cluster_list = esp_zb_zcl_cluster_list_create();
+
+    esp_zb_on_off_switch_cfg_t onoffswitch_config = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
+    onoffswitch_config.basic_cfg.power_source = POWER_SOURCE;
+
+    // not sure if could reuse basic cluster from endpoint-1
+    esp_zb_attribute_list_t *btn_cluster_basic = esp_zb_basic_cluster_create(&onoffswitch_config.basic_cfg);
+
+    esp_zb_cluster_list_add_basic_cluster(btn_cluster_list, btn_cluster_basic, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    // on/off switch cluster
+    //
+    esp_zb_on_off_switch_cluster_cfg_t cluster_onoffswitch_config = {
+      .switch_type = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_TYPE_MOMENTARY,
+      .switch_action = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_ACTIONS_TYPE1
+    };
+    esp_zb_attribute_list_t *onoff_switch_cluster = esp_zb_on_off_switch_cfg_cluster_create(&cluster_onoffswitch_config);
+    esp_zb_cluster_list_add_on_off_switch_config_cluster(btn_cluster_list, onoff_switch_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    // add clusters of btn endpoint to endpoint
+    esp_zb_ep_list_add_ep(ep_list, btn_cluster_list, SWITCH_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
+
+
     esp_zb_device_register(ep_list);
     esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
 
     //Erase NVRAM before creating connection to new Coordinator
-    //esp_zb_nvram_erase_at_start(true); //Comment out this line to erase NVRAM data if you are conneting to new Coordinator
+    esp_zb_nvram_erase_at_start(true); //Comment out this line to erase NVRAM data if you are conneting to new Coordinator
 
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_main_loop_iteration();
@@ -254,7 +284,7 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
     log_i("Received message: endpoint(%d), cluster(0x%x), attribute(0x%x), data size(%d)", message->info.dst_endpoint, message->info.cluster,
              message->attribute.id, message->attribute.data.size);
 
-    if (message->info.dst_endpoint == HA_ESP_LIGHT_ENDPOINT) {
+    if (message->info.dst_endpoint == LIGHT_ENDPOINT) {
         if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF) {
             if (message->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_BOOL) {
                 light_state = message->attribute.data.value ? *(bool *)message->attribute.data.value : light_state;
@@ -348,19 +378,18 @@ void setup() {
     };
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
-    pinMode(BTN_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(BTN_PIN), btn_isr, CHANGE);
-    gpio_evt_queue = xQueueCreate(10, sizeof(int));
-
     // Init RMT and leave light OFF
     neopixelWrite(LED_PIN,0,0,0);
 
     // Start Zigbee task
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
 
+    pinMode(BTN_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(BTN_PIN), btn_isr, CHANGE);
+    gpio_evt_queue = xQueueCreate(10, sizeof(int));
+
     // Start btn task
     xTaskCreate(btn_task, "Btn Task", 2048, NULL, 5, NULL);
-  
 }
 
 void loop() {
