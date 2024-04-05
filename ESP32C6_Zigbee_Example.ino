@@ -42,8 +42,6 @@ temperature_sensor_handle_t tempsensor;
 #define LED_PIN RGB_BUILTIN
 #define BTN_PIN GPIO_NUM_9
 
-char modelid[] = {6, 'B', 'M', 'O', 'T', 'O', 'R', '\0'};
-char manufname[] = {6, 'V', 'O', 'L', 'K', 'E', 'R', '\0'};
 
 bool light_state = 0;
 uint8_t light_level = 254;
@@ -76,12 +74,20 @@ uint8_t light_level = 254;
 #define ED_AGING_TIMEOUT                ESP_ZB_ED_AGING_TIMEOUT_64MIN
 #define ED_KEEP_ALIVE                   3000    /* 3000 millisecond */
 #define LIGHT_ENDPOINT                  1     /* esp light bulb device endpoint, used to process light controlling commands */
+#define MANUFACTURER                    "VOLKER"
+#define MODELNAME                       "BMOTOR"
 #define SWITCH_ENDPOINT                 2
 #define APP_PROFILE_ID                  0x0104 /* 0x0104 == Home Automation (HA) */
-#define POWER_SOURCE                    3 /* 0x03 == battery */
+#define POWER_SRC_BAT                   3 /* 0x03 == battery */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK  /* Zigbee primary channel mask use in the example */
 
-/********************* Zigbee functions **************************/
+
+static void set_zcl_string(char *buffer, const char *value)
+{
+    buffer[0] = (char) strlen(value);
+    memcpy(buffer + 1, value, buffer[0]);
+}
+
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 {
     ESP_ERROR_CHECK(esp_zb_bdb_start_top_level_commissioning(mode_mask));
@@ -164,23 +170,25 @@ static void esp_zb_task(void *pvParameters)
 
     // default config for on/off sets mandatory fields for Basic, Identify, Groups, Scenes, On/Off
     //esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
-    esp_zb_color_dimmable_light_cfg_t light_cfg = ESP_ZB_DEFAULT_COLOR_DIMMABLE_LIGHT_CONFIG();
-
+    
 
     esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
 
+    // initalize the cluster cfg with defaults for a light
+    esp_zb_color_dimmable_light_cfg_t light_cfg = ESP_ZB_DEFAULT_COLOR_DIMMABLE_LIGHT_CONFIG();
+
     // Basic cluster
     // 
-    esp_zb_basic_cluster_cfg_t basic_cfg = {
-      .zcl_version = 0x02,
-      .power_source = 0x03
-    };
-    esp_zb_attribute_list_t *cluster_basic = esp_zb_basic_cluster_create(&basic_cfg);
 
-    uint8_t power_source = 3;
-    esp_zb_basic_cluster_add_attr(cluster_basic, ESP_ZB_ZCL_ATTR_BASIC_POWER_SOURCE_ID, &power_source);
-    esp_zb_basic_cluster_add_attr(cluster_basic, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, &manufname[0]);
-    esp_zb_basic_cluster_add_attr(cluster_basic, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, &modelid[0]);
+    // indicate use of battery instead of default value
+    light_cfg.basic_cfg.power_source = POWER_SRC_BAT;
+    esp_zb_attribute_list_t *cluster_basic = esp_zb_basic_cluster_create(&light_cfg.basic_cfg);
+
+    char buffer[16];
+    set_zcl_string(buffer, MANUFACTURER);
+    esp_zb_basic_cluster_add_attr(cluster_basic, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, buffer);
+    set_zcl_string(buffer, MODELNAME);
+    esp_zb_basic_cluster_add_attr(cluster_basic, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, buffer);
 
     esp_zb_cluster_list_add_basic_cluster(cluster_list, cluster_basic, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
@@ -224,8 +232,18 @@ static void esp_zb_task(void *pvParameters)
     //
     esp_zb_attribute_list_t *time_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_TIME);
     esp_zb_cluster_list_add_time_cluster(cluster_list, time_cluster, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
-    
-    // add clusters of light endpoint to endpoint
+
+    // on/off switch cluster
+    //
+    // esp_zb_on_off_switch_cluster_cfg_t cluster_onoffswitch_config = {
+    //   .switch_type = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_TYPE_MOMENTARY,
+    //   .switch_action = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_ACTIONS_TYPE1
+    // };
+    // esp_zb_attribute_list_t *onoff_switch_cluster = esp_zb_on_off_switch_cfg_cluster_create(&cluster_onoffswitch_config);
+    // esp_zb_cluster_list_add_on_off_switch_config_cluster(cluster_list, onoff_switch_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+
+    // add clusters to endpoint
     esp_zb_ep_list_add_ep(ep_list, cluster_list, LIGHT_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_LEVEL_CONTROLLABLE_OUTPUT_DEVICE_ID);
 
 
@@ -234,27 +252,27 @@ static void esp_zb_task(void *pvParameters)
     //   Create endpoint for button
     /////////////////////////////////////////////////////
 
-    esp_zb_cluster_list_t *btn_cluster_list = esp_zb_zcl_cluster_list_create();
+    // esp_zb_cluster_list_t *btn_cluster_list = esp_zb_zcl_cluster_list_create();
 
-    esp_zb_on_off_switch_cfg_t onoffswitch_config = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    onoffswitch_config.basic_cfg.power_source = POWER_SOURCE;
+    // esp_zb_on_off_switch_cfg_t onoffswitch_config = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
+    // onoffswitch_config.basic_cfg.power_source = POWER_SRC_BAT;
 
-    // not sure if could reuse basic cluster from endpoint-1
-    esp_zb_attribute_list_t *btn_cluster_basic = esp_zb_basic_cluster_create(&onoffswitch_config.basic_cfg);
+    // // not sure if could reuse basic cluster from endpoint-1
+    // esp_zb_attribute_list_t *btn_cluster_basic = esp_zb_basic_cluster_create(&onoffswitch_config.basic_cfg);
 
-    esp_zb_cluster_list_add_basic_cluster(btn_cluster_list, btn_cluster_basic, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    // esp_zb_cluster_list_add_basic_cluster(btn_cluster_list, btn_cluster_basic, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
-    // on/off switch cluster
-    //
-    esp_zb_on_off_switch_cluster_cfg_t cluster_onoffswitch_config = {
-      .switch_type = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_TYPE_MOMENTARY,
-      .switch_action = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_ACTIONS_TYPE1
-    };
-    esp_zb_attribute_list_t *onoff_switch_cluster = esp_zb_on_off_switch_cfg_cluster_create(&cluster_onoffswitch_config);
-    esp_zb_cluster_list_add_on_off_switch_config_cluster(btn_cluster_list, onoff_switch_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    // // on/off switch cluster
+    // //
+    // esp_zb_on_off_switch_cluster_cfg_t cluster_onoffswitch_config = {
+    //   .switch_type = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_TYPE_MOMENTARY,
+    //   .switch_action = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_ACTIONS_TYPE1
+    // };
+    // esp_zb_attribute_list_t *onoff_switch_cluster = esp_zb_on_off_switch_cfg_cluster_create(&cluster_onoffswitch_config);
+    // esp_zb_cluster_list_add_on_off_switch_config_cluster(btn_cluster_list, onoff_switch_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
-    // add clusters of btn endpoint to endpoint
-    esp_zb_ep_list_add_ep(ep_list, btn_cluster_list, SWITCH_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
+    // // add clusters of btn endpoint to endpoint
+    // esp_zb_ep_list_add_ep(ep_list, btn_cluster_list, SWITCH_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
 
 
     esp_zb_device_register(ep_list);
@@ -264,7 +282,7 @@ static void esp_zb_task(void *pvParameters)
     //Erase NVRAM before creating connection to new Coordinator
     esp_zb_nvram_erase_at_start(true); //Comment out this line to erase NVRAM data if you are conneting to new Coordinator
 
-    ESP_ERROR_CHECK(esp_zb_start(false));
+    ESP_ERROR_CHECK(esp_zb_start(true));
     esp_zb_main_loop_iteration();
 }
 
@@ -285,7 +303,12 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
              message->attribute.id, message->attribute.data.size);
 
     if (message->info.dst_endpoint == LIGHT_ENDPOINT) {
-        if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF) {
+        if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY) {
+          if (message->attribute.id == ESP_ZB_ZCL_ATTR_IDENTIFY_IDENTIFY_TIME_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_U16) {
+            uint16_t identifyTime = * (uint16_t*) message->attribute.data.value;
+            log_i("Identify for %ds", identifyTime);
+          }
+        } else if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF) {
             if (message->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_BOOL) {
                 light_state = message->attribute.data.value ? *(bool *)message->attribute.data.value : light_state;
                 log_i("Light sets to %s", light_state ? "On" : "Off");
@@ -309,6 +332,16 @@ static esp_err_t zb_read_attribute_handler(esp_zb_zcl_cmd_read_attr_resp_message
              message->variables->attribute.id, message->variables->attribute.data.size);
 
     return ESP_OK;
+}
+
+
+static void send_btn() {
+    esp_zb_zcl_on_off_cmd_t cmd_req;
+    cmd_req.zcl_basic_cmd.src_endpoint = LIGHT_ENDPOINT;
+    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
+    cmd_req.on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_OFF_ID;
+    log_i("Send 'on_off off' command");
+    esp_zb_zcl_on_off_cmd_req(&cmd_req);
 }
 
 
@@ -349,10 +382,9 @@ static void btn_task(void *pvParameters) {
     else if (btn_state == 1 && last_state == 0) {
       release_stamp = millis();
 
-      if (release_stamp - press_stamp < 200) {
-        log_i("Veryshort press");
-      } else if (release_stamp - press_stamp < 500) {
+      if (release_stamp - press_stamp < 500) {
         log_i("Short press");
+        send_btn();
       }
       else {
         log_i("Long press");
@@ -401,6 +433,4 @@ void loop() {
   //esp_zb_zcl_set_attribute_val(1, ZB_ZCL_CLUSTER_ID_DEVICE_TEMP_CONFIG, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_ATTR_DEVICE_TEMP_CONFIG_CURRENT_TEMP_ID, &itemp, false);)
   delay(5000);
 
-  
-    //empty, zigbee running in task
 }
