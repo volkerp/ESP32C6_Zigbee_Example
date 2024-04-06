@@ -74,11 +74,10 @@ uint8_t light_level = 254;
 #define ED_AGING_TIMEOUT                ESP_ZB_ED_AGING_TIMEOUT_64MIN
 #define ED_KEEP_ALIVE                   3000    /* 3000 millisecond */
 #define LIGHT_ENDPOINT                  1     /* esp light bulb device endpoint, used to process light controlling commands */
-#define MANUFACTURER                    "VOLKER"
-#define MODELNAME                       "BMOTOR"
-#define SWITCH_ENDPOINT                 2
+#define MANUFACTURER                    "DIY"
+#define MODELNAME                       "LedLight"
 #define APP_PROFILE_ID                  0x0104 /* 0x0104 == Home Automation (HA) */
-#define POWER_SRC_BAT                   3 /* 0x03 == battery */
+#define POWER_SOURCE                    3 /* 0x03 == battery */
 #define ESP_ZB_PRIMARY_CHANNEL_MASK     ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK  /* Zigbee primary channel mask use in the example */
 
 
@@ -161,17 +160,11 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
 
 
-    //esp_zb_ep_list_t *esp_zb_on_off_light_ep = esp_zb_on_off_light_ep_create(HA_ESP_LIGHT_ENDPOINT, &light_cfg);
-    // esp_zb_cluster_list_t *cluster_list = esp_zb_on_off_light_ep->endpoint.cluster_desc_list;
-
     /////////////////////////////////////////////////////
     //   Create endpoint for LED light
     /////////////////////////////////////////////////////
-
-    // default config for on/off sets mandatory fields for Basic, Identify, Groups, Scenes, On/Off
-    //esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
-    
-
+  
+    // clusters of the light endpoint
     esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
 
     // initalize the cluster cfg with defaults for a light
@@ -181,7 +174,7 @@ static void esp_zb_task(void *pvParameters)
     // 
 
     // indicate use of battery instead of default value
-    light_cfg.basic_cfg.power_source = POWER_SRC_BAT;
+    light_cfg.basic_cfg.power_source = POWER_SOURCE;
     esp_zb_attribute_list_t *cluster_basic = esp_zb_basic_cluster_create(&light_cfg.basic_cfg);
 
     char buffer[16];
@@ -218,10 +211,6 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_level_cluster_add_attr(esp_zb_level_cluster, ESP_ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID, &light_level);
     esp_zb_cluster_list_add_level_cluster(cluster_list, esp_zb_level_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
-    // Color Control Cluster
-    esp_zb_attribute_list_t *color_cluster = esp_zb_color_control_cluster_create(&light_cfg.color_cfg);
-    esp_zb_cluster_list_add_color_control_cluster(cluster_list, color_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
-
     // Device Temp Cluster
     //
     // esp_zb_attribute_list_t *device_temp_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_DEVICE_TEMP_CONFIG);
@@ -233,19 +222,9 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_attribute_list_t *time_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_TIME);
     esp_zb_cluster_list_add_time_cluster(cluster_list, time_cluster, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
 
-    // on/off switch cluster
-    //
-    // esp_zb_on_off_switch_cluster_cfg_t cluster_onoffswitch_config = {
-    //   .switch_type = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_TYPE_MOMENTARY,
-    //   .switch_action = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_ACTIONS_TYPE1
-    // };
-    // esp_zb_attribute_list_t *onoff_switch_cluster = esp_zb_on_off_switch_cfg_cluster_create(&cluster_onoffswitch_config);
-    // esp_zb_cluster_list_add_on_off_switch_config_cluster(cluster_list, onoff_switch_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
-
 
     // add clusters to endpoint
     esp_zb_ep_list_add_ep(ep_list, cluster_list, LIGHT_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_LEVEL_CONTROLLABLE_OUTPUT_DEVICE_ID);
-
 
 
     /////////////////////////////////////////////////////
@@ -302,26 +281,40 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
     log_i("Received message: endpoint(%d), cluster(0x%x), attribute(0x%x), data size(%d)", message->info.dst_endpoint, message->info.cluster,
              message->attribute.id, message->attribute.data.size);
 
-    if (message->info.dst_endpoint == LIGHT_ENDPOINT) {
-        if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY) {
-          if (message->attribute.id == ESP_ZB_ZCL_ATTR_IDENTIFY_IDENTIFY_TIME_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_U16) {
-            uint16_t identifyTime = * (uint16_t*) message->attribute.data.value;
-            log_i("Identify for %ds", identifyTime);
-          }
-        } else if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF) {
+    if (message->info.dst_endpoint != LIGHT_ENDPOINT) {
+      return ESP_ERR_INVALID_ARG;
+    }
+
+    switch (message->info.cluster) {
+        case ESP_ZB_ZCL_CLUSTER_ID_IDENTIFY: {
+            if (message->attribute.id == ESP_ZB_ZCL_ATTR_IDENTIFY_IDENTIFY_TIME_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_U16) {
+              uint16_t identifyTime = * (uint16_t*) message->attribute.data.value;
+              log_i("Identify for %ds", identifyTime);
+            }
+            break;
+        }
+        case ESP_ZB_ZCL_CLUSTER_ID_ON_OFF: {
             if (message->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_BOOL) {
                 light_state = message->attribute.data.value ? *(bool *)message->attribute.data.value : light_state;
                 log_i("Light sets to %s", light_state ? "On" : "Off");
                 neopixelWrite(LED_PIN,255*light_state,255*light_state,255*light_state); // Toggle light
             }
-        } else if (message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL) {
+            break;
+        }
+        case ESP_ZB_ZCL_CLUSTER_ID_COLOR_CONTROL: {
+          
+          break;
+        }
+        case ESP_ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL: {
             if (message->attribute.id ==  ESP_ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID && message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_U8) {
                 light_level = message->attribute.data.value ? *(uint8_t *)message->attribute.data.value : 255;
                 log_i("Level set to %d", light_level);
                 neopixelWrite(LED_PIN, light_level * light_state, light_level * light_state, light_level * light_state);
             }
+            break;
         }
     }
+
     return ret;
 }
 
@@ -355,8 +348,6 @@ static void IRAM_ATTR btn_isr()
 
 
 static void btn_task(void *pvParameters) {
-#define POLL_DELAY 10
-
   int last_state = 1;
   int press_stamp = 0;
   int release_stamp = 0;
