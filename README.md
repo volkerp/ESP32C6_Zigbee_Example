@@ -18,3 +18,18 @@ Turns a ESP32C6 dev board into a dimmable zigbee light.
 For reset/rejoin uncomment the line that reads
 ```esp_zb_nvram_erase_at_start(true);```
 
+## zigbee2mqtt external definition
+```yaml
+const {identify, light} = require('zigbee-herdsman-converters/lib/modernExtend');
+
+const definition = {
+    zigbeeModel: ['LedLight'],
+    model: 'LedLight',
+    vendor: 'DIY',
+    description: 'ESP32C6',
+    extend: [identify(), light()],
+    meta: {},
+};
+
+module.exports = definition;
+```

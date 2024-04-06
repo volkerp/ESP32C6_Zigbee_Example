@@ -211,48 +211,8 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_level_cluster_add_attr(esp_zb_level_cluster, ESP_ZB_ZCL_ATTR_LEVEL_CONTROL_CURRENT_LEVEL_ID, &light_level);
     esp_zb_cluster_list_add_level_cluster(cluster_list, esp_zb_level_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
-    // Device Temp Cluster
-    //
-    // esp_zb_attribute_list_t *device_temp_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_DEVICE_TEMP_CONFIG);
-    // int16_t int_temp = 55;
-    // esp_zb_cluster_add_attr(device_temp_cluster, (uint16_t)0x0000, &int_temp);
-
-    // Time cluster
-    //
-    esp_zb_attribute_list_t *time_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_TIME);
-    esp_zb_cluster_list_add_time_cluster(cluster_list, time_cluster, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
-
-
     // add clusters to endpoint
     esp_zb_ep_list_add_ep(ep_list, cluster_list, LIGHT_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_LEVEL_CONTROLLABLE_OUTPUT_DEVICE_ID);
-
-
-    /////////////////////////////////////////////////////
-    //   Create endpoint for button
-    /////////////////////////////////////////////////////
-
-    // esp_zb_cluster_list_t *btn_cluster_list = esp_zb_zcl_cluster_list_create();
-
-    // esp_zb_on_off_switch_cfg_t onoffswitch_config = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    // onoffswitch_config.basic_cfg.power_source = POWER_SRC_BAT;
-
-    // // not sure if could reuse basic cluster from endpoint-1
-    // esp_zb_attribute_list_t *btn_cluster_basic = esp_zb_basic_cluster_create(&onoffswitch_config.basic_cfg);
-
-    // esp_zb_cluster_list_add_basic_cluster(btn_cluster_list, btn_cluster_basic, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
-
-    // // on/off switch cluster
-    // //
-    // esp_zb_on_off_switch_cluster_cfg_t cluster_onoffswitch_config = {
-    //   .switch_type = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_TYPE_MOMENTARY,
-    //   .switch_action = ESP_ZB_ZCL_ON_OFF_SWITCH_CONFIGURATION_SWITCH_ACTIONS_TYPE1
-    // };
-    // esp_zb_attribute_list_t *onoff_switch_cluster = esp_zb_on_off_switch_cfg_cluster_create(&cluster_onoffswitch_config);
-    // esp_zb_cluster_list_add_on_off_switch_config_cluster(btn_cluster_list, onoff_switch_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
-
-    // // add clusters of btn endpoint to endpoint
-    // esp_zb_ep_list_add_ep(ep_list, btn_cluster_list, SWITCH_ENDPOINT, APP_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
-
 
     esp_zb_device_register(ep_list);
     esp_zb_core_action_handler_register(zb_action_handler);
@@ -265,7 +225,6 @@ static void esp_zb_task(void *pvParameters)
     esp_zb_main_loop_iteration();
 }
 
-/* Handle the light attribute */
 
 static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t *message)
 {
@@ -328,72 +287,8 @@ static esp_err_t zb_read_attribute_handler(esp_zb_zcl_cmd_read_attr_resp_message
 }
 
 
-static void send_btn() {
-    esp_zb_zcl_on_off_cmd_t cmd_req;
-    cmd_req.zcl_basic_cmd.src_endpoint = LIGHT_ENDPOINT;
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
-    cmd_req.on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_OFF_ID;
-    log_i("Send 'on_off off' command");
-    esp_zb_zcl_on_off_cmd_req(&cmd_req);
-}
-
-
-static QueueHandle_t gpio_evt_queue = NULL;
-
-static void IRAM_ATTR btn_isr()
-{
-    int state = digitalRead(BTN_PIN);
-    xQueueSendFromISR(gpio_evt_queue, &state, NULL);
-}
-
-
-static void btn_task(void *pvParameters) {
-  int last_state = 1;
-  int press_stamp = 0;
-  int release_stamp = 0;
-  int fast_stamp = 0;
-  int fast_count = 0;
-
-  for (;;) {
-    int btn_state;
-    xQueueReceive(gpio_evt_queue, &btn_state, portMAX_DELAY);
-    //int btn_state = gpio_get_level(BTN_PIN);
-    if (btn_state == 0 && last_state == 1) {
-      // press event
-      press_stamp = millis();
-      if (fast_stamp == 0) {
-        // beginning of fast press
-        fast_stamp = press_stamp;
-      } else if (press_stamp - fast_stamp > 1000) {
-        // too slow for fast press
-        fast_stamp = 0;
-        fast_count = 0;
-      }
-    }
-    else if (btn_state == 1 && last_state == 0) {
-      release_stamp = millis();
-
-      if (release_stamp - press_stamp < 500) {
-        log_i("Short press");
-        send_btn();
-      }
-      else {
-        log_i("Long press");
-        esp_zb_factory_reset();
-      }
-    }
-
-    last_state = btn_state;
-  }
-}
-
-
 /********************* Arduino functions **************************/
 void setup() {
-    temperature_sensor_config_t temp_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
-    temperature_sensor_install(&temp_config, &tempsensor);
-    temperature_sensor_enable(tempsensor);
-
     // Init Zigbee
     esp_zb_platform_config_t config = {
         .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
@@ -406,22 +301,7 @@ void setup() {
 
     // Start Zigbee task
     xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
-
-    pinMode(BTN_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(BTN_PIN), btn_isr, CHANGE);
-    gpio_evt_queue = xQueueCreate(10, sizeof(int));
-
-    // Start btn task
-    xTaskCreate(btn_task, "Btn Task", 2048, NULL, 5, NULL);
 }
 
 void loop() {
-  float temp = 0;
-  temperature_sensor_get_celsius(tempsensor, &temp);
-  
-  //log_i("Temp %f", temp);
-  //int16_t itemp = temp;
-  //esp_zb_zcl_set_attribute_val(1, ZB_ZCL_CLUSTER_ID_DEVICE_TEMP_CONFIG, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_ATTR_DEVICE_TEMP_CONFIG_CURRENT_TEMP_ID, &itemp, false);)
-  delay(5000);
-
 }
