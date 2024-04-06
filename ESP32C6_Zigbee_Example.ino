@@ -151,6 +151,12 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
     return ret;
 }
 
+static void zb_scheduler_handler(uint8_t param) {
+  log_i("scheduler");
+  esp_zb_scheduler_alarm(zb_scheduler_handler, 1, 10000);
+
+}
+
 static void esp_zb_task(void *pvParameters)
 {
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZED_CONFIG();
@@ -214,8 +220,8 @@ static void esp_zb_task(void *pvParameters)
     // Device Temp Cluster
     //
     // esp_zb_attribute_list_t *device_temp_cluster = esp_zb_zcl_attr_list_create(ESP_ZB_ZCL_CLUSTER_ID_DEVICE_TEMP_CONFIG);
-    // int16_t int_temp = 55;
-    // esp_zb_cluster_add_attr(device_temp_cluster, (uint16_t)0x0000, &int_temp);
+    // uint16_t int_temp = 55;
+    // esp_zb_cluster_add_attr(device_temp_cluster, (uint16_t)0x0000, int_temp);
 
     // Time cluster
     //
@@ -260,6 +266,8 @@ static void esp_zb_task(void *pvParameters)
 
     //Erase NVRAM before creating connection to new Coordinator
     esp_zb_nvram_erase_at_start(true); //Comment out this line to erase NVRAM data if you are conneting to new Coordinator
+
+    esp_zb_scheduler_alarm(zb_scheduler_handler, 0, 500);
 
     ESP_ERROR_CHECK(esp_zb_start(true));
     esp_zb_main_loop_iteration();
